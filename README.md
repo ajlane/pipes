@@ -1,7 +1,7 @@
-Streams
+Pipes
 =======
 
-Composable heavy-weight iterators for Java.
+Light-weight lazy data processing pipelines for Java.
 
 A `Stream` provides `hasNext` and `next` methods, just like an `Iterator`, but is also `Closeable` and throws predictable checked exceptions.
 
