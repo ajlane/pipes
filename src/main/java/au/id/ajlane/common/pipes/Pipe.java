@@ -15,16 +15,16 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * A component in the data procesing pipeline.
- * <p/>
+ * A component in the data processing pipeline.
+ * <p>
  * To use a {@code Pipe}, call {@link #accept(Object, PipeConsumer)} for each input, then call
  * {@link #flush(PipeConsumer)} to flush out any buffered results.
- * <p/>
+ * <p>
  * {@code Pipe}s can be chained together using {@link #then(Pipe) or {@link #fork(Collection)}), or
  * run asynchronously using {@link #async(Consumer)}.
- * <p/>
+ * <p>
  * Most inheritors will only need to implement {@link #accept(Object, PipeConsumer)}.
- * <p/>
+ * <p>
  * Some inheritors (in particular, those which buffer their results) may also wish to implement
  * {@link #flush(PipeConsumer)}. If they do so, they must ensure that they call {@link
  * PipeConsumer#flush()} on the output consumer.
