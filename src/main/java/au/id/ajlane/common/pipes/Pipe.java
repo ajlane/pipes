@@ -14,30 +14,67 @@ import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public interface Pipe<TInput, TOutput> extends PipeConsumer<TInput> {
-
-  public default void accept(final TInput input) throws PipeException {
-    accept(input, i -> {
-    });
-  }
+public interface Pipe<TInput, TOutput> {
 
   public void accept(final TInput input, final PipeConsumer<TOutput> output) throws PipeException;
 
+  public default void acceptEach(final Iterable<TInput> inputs, final PipeConsumer<TOutput> output)
+      throws PipeException {
+    for (final TInput input : inputs) {
+      accept(input, output);
+    }
+  }
+
+  public default void flush(final TInput input, final PipeConsumer<TOutput> output)
+      throws PipeException {
+    accept(input, output);
+    flush(output);
+  }
+
+  public default void flushAll(final Iterable<TInput> inputs,
+                               final PipeConsumer<TOutput> output)
+      throws PipeException {
+    acceptEach(inputs, output);
+    flush(output);
+  }
+
+  public default void flushEach(final Iterable<TInput> inputs,
+                                final PipeConsumer<TOutput> output)
+      throws PipeException {
+    for (final TInput input : inputs) {
+      flush(input, output);
+    }
+  }
+
+  public default void flush(final PipeConsumer<TOutput> output) throws PipeException {
+    output.flush();
+  }
+
   public default <TNewOutput> Pipe<TInput, TNewOutput> then(final Pipe<TOutput, TNewOutput> pipe) {
-    return (input, output) -> this.accept(input, intermediate -> pipe.accept(intermediate, output));
+    return (input, output) -> this.accept(input, new PipeConsumer<TOutput>() {
+      @Override
+      public void accept(final TOutput intermediate) throws PipeException {
+        pipe.accept(intermediate, output);
+      }
+
+      @Override
+      public void flush() throws PipeException {
+        pipe.flush(output);
+      }
+    });
   }
 
   public default <TNewOutput> Pipe<TInput, TNewOutput> thenAsync(
       final Pipe<TOutput, TNewOutput> pipe,
       final Consumer<PipeException> exceptionConsumer) {
-    return then(pipe.toAsync(exceptionConsumer));
+    return then(pipe.async(exceptionConsumer));
   }
 
   public default <TNewOutput> Pipe<TInput, TNewOutput> thenAsync(
       final Pipe<TOutput, TNewOutput> pipe,
       final Consumer<PipeException> exceptionConsumer,
       final Executor executor) {
-    return then(pipe.toAsync(exceptionConsumer, executor));
+    return then(pipe.async(exceptionConsumer, executor));
   }
 
   public default <TNewOutput> Pipe<TInput, TNewOutput> fork(
@@ -67,14 +104,14 @@ public interface Pipe<TInput, TOutput> extends PipeConsumer<TInput> {
       final Consumer<PipeException> exceptionConsumer,
       final Executor executor) {
     return fork(pipes.<Pipe<TOutput, TNewOutput>>map(
-        pipe -> pipe.toAsync(exceptionConsumer, executor)));
+        pipe -> pipe.async(exceptionConsumer, executor)));
   }
 
   public default <TAccumulate, TResult> TResult collect(final TInput input,
                                                         final Collector<? super TOutput, TAccumulate, TResult> collector)
       throws PipeException {
     final TAccumulate accumulate = collector.supplier().get();
-    accept(input, output -> collector.accumulator().accept(accumulate, output));
+    flush(input, output -> collector.accumulator().accept(accumulate, output));
     return collector.finisher().apply(accumulate);
   }
 
@@ -94,22 +131,56 @@ public interface Pipe<TInput, TOutput> extends PipeConsumer<TInput> {
     return collect(input, Collectors.toSet());
   }
 
-  public default Pipe<TInput, TOutput> toAsync(
-      final Consumer<PipeException> exceptionConsumer) {
-    return toAsync(exceptionConsumer, ForkJoinPool.commonPool());
+  public default PipeConsumer<TInput> asPipeConsumer() {
+    return new PipeConsumer<TInput>() {
+      @Override
+      public void accept(final TInput input) throws PipeException {
+        Pipe.this.accept(input, i -> {
+        });
+      }
+
+      @Override
+      public void flush() throws PipeException {
+        Pipe.this.flush(i -> {
+        });
+      }
+    };
   }
 
-  public default Pipe<TInput, TOutput> toAsync(
+  public default Pipe<TInput, TOutput> async(
+      final Consumer<PipeException> exceptionConsumer) {
+    return async(exceptionConsumer, ForkJoinPool.commonPool());
+  }
+
+  public default Pipe<TInput, TOutput> async(
       final Consumer<PipeException> exceptionConsumer,
       final Executor executor) {
-    return (input, output) ->
-        CompletableFuture.runAsync(() -> {
+    final Pipe<TInput, TOutput> innerPipe = this;
+    return new Pipe<TInput, TOutput>() {
+      @Override
+      public void accept(final TInput input, final PipeConsumer<TOutput> output) {
+        run(() -> {
           try {
-            accept(input, output);
+            innerPipe.accept(input, output);
           } catch (final PipeException ex) {
             throw new UnhandledCheckedException(ex);
           }
-        }, executor).exceptionally(ex -> {
+        });
+      }
+
+      @Override
+      public void flush(final PipeConsumer<TOutput> output) {
+        run(() -> {
+          try {
+            innerPipe.flush(output);
+          } catch (final PipeException ex) {
+            throw new UnhandledCheckedException(ex);
+          }
+        });
+      }
+
+      private void run(final Runnable task) {
+        CompletableFuture.runAsync(task, executor).exceptionally(ex -> {
           if (ex.getClass().equals(UnhandledCheckedException.class)) {
             final Throwable cause = ex.getCause();
             if (cause instanceof PipeException) {
@@ -124,6 +195,8 @@ public interface Pipe<TInput, TOutput> extends PipeConsumer<TInput> {
             throw new UnhandledCheckedException((Exception) ex);
           }
         });
+      }
+    };
   }
 
   public default <TNewOutput> Pipe<TInput, TNewOutput> map(
