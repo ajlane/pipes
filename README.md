@@ -1,69 +1,56 @@
 Pipes
 =======
 
-Light-weight lazy data processing pipelines for Java.
+Light-weight data processing pipelines for Java.
 
-A `Stream` provides `hasNext` and `next` methods, just like an `Iterator`, but is also `Closeable` and throws predictable checked exceptions.
-
-Like `Iterable`, `Streamable` types can provide fresh instances of `Stream` to provide sequential access to a resource.
-
-Utility methods on `Streams` and `Streamables` allow streams to be transformed and composed.
-
-Streams is provided under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+Pipes is provided under the [Apache License Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
 
 Example
 -------
 
-This example uses Streams to lazily read an arbitrary number of text files and output their contents line-by-line.
+This example uses Pipes to read an arbitrary set of text files and output their contents line-by-line.
 
 ```java
 
 public static void main(final String... args) throws StreamException
 {
-    final Stream<String> files = Streams.fromArray(args);
-
-    // Convert each file into a stream of lines.
-    final Stream<String> lines = Streams.flatten(
-            files,
-            new AbstractStreamTransform<String, Stream<String>>()
-            {
-                @Override
-                protected Stream<String> transform(final String file)
-                {
-                    return FileLineReadingStream.fromFile(Paths.get(file), StandardCharsets.UTF_8);
-                }
-            }
-    );
-
-    // Filter out any blank lines or lines starting with '#'.
-    final Stream<String> filteredLines = Streams.filter(
-            lines,
-            new AbstractStreamFilter<String>()
-            {
-                @Override
-                public boolean keep(final String line)
-                {
-                    return line != null && !line.isEmpty() && !line.matches("\\s*(#.*)?");
-                }
-            }
-    );
-
-    // Consume the stream of lines by printing to standard out.
-    // We don't care about files or encoding here, the stream will handle all of that for us.
-    try
-    {
-        while (lines.hasNext())
-        {
-            System.out.println(lines.next());
-        }
+    // A pipe to convert arguments to paths
+    final Pipe<String[],Path> argsToPaths = (i,o) -> {
+        for(String arg : i) o.accept(Paths.get(arg));
+    };
+    // A pipe to open paths as byte streams
+    final Pipe<Path, InputStream> pathToStream = (i,o) -> {
+    try {
+      o.accept(Files.newInputStream(i, StandardOpenOption.READ));
+    } catch (final IOException e) {
+      throw new PipeException(e);
     }
-    finally
-    {
-        lines.close();
+    };
+    // A pipe to read lines of text from byte streams
+    final Pipe<InputStream, String> streamToLines = (i,o) -> {
+    try(final BufferedReader reader = new BufferedReader(new InputStreamReader(i, StandardCharsets.UTF_8))) {
+      for(String line = reader.readLine(); line != null; line = reader.readLine()){
+        o.accept(line);
+      }
+    } catch (final IOException e) {
+      throw new PipeException(e);
     }
+    };
+    // A predicate to filter out any blank lines or lines starting with '#'.
+    final PipePredicate<String> nonComments = line -> line != null && !line.isEmpty() && !line.matches("\\s*(#.*)?");
+
+    // Build the pipeline
+    final Pipe<String, String> filteredLines = argToPath.append(pathToStream)
+                                                      .append(streamToLines)
+                                                      .filter(nonComments);
+
+    // Consume the pipeline by printing to standard out.
+    filteredLines.flush(args, line -> System.out.println(line));
 }
 
 ```
+
+<!--- Cloudbees repository not available anymore
 
 Maven
 -----
@@ -74,7 +61,7 @@ Include the following in your pom.xml to start using Streams.
 <dependencies>
     <dependency>
         <groupId>au.id.ajlane.common</groupId>
-        <artifactId>streams</artifactId>
+        <artifactId>pipes</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </dependency>
 </dependencies>
@@ -93,3 +80,5 @@ Include the following in your pom.xml to start using Streams.
     </repository>
 </repositories>
 ```
+
+-->
